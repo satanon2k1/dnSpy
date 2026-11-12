@@ -22,10 +22,8 @@ using System.Linq;
 using System.Text;
 using dnlib.DotNet;
 using dnSpy.Contracts.Decompiler;
-using ICSharpCode.Decompiler.Ast;
-using ICSharpCode.NRefactory.TypeSystem;
-using ICSharpCode.NRefactory.VB.Visitors;
 
+/*
 namespace dnSpy.Decompiler.ILSpy.Core.VisualBasic {
 	sealed class ILSpyEnvironmentProvider : IEnvironmentProvider {
 		public string RootNamespace => "";
@@ -41,7 +39,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.VisualBasic {
 			return mr is null ? string.Empty : mr.FullName;
 		}
 
-		/*
+
 var annotation = type.Annotation<TypeReference>();
 if (annotation is null )
 	return null;
@@ -52,7 +50,7 @@ if (entity is not null) {
 	current = loader.ReadTypeReference(typeInfo).Resolve(context).GetDefinition();
 }
 
-return loader.ReadTypeReference(annotation, entity: current).Resolve(context);*/
+return loader.ReadTypeReference(annotation, entity: current).Resolve(context);
 		public ICSharpCode.NRefactory.TypeSystem.IType ResolveType(ICSharpCode.NRefactory.VB.Ast.AstType type, ICSharpCode.NRefactory.VB.Ast.TypeDeclaration? entity = null) => SpecialType.UnknownType;
 
 		public TypeKind GetTypeKindForAstType(ICSharpCode.NRefactory.CSharp.AstType type) {
@@ -170,3 +168,4 @@ return loader.ReadTypeReference(annotation, entity: current).Resolve(context);*/
 		}
 	}
 }
+*/

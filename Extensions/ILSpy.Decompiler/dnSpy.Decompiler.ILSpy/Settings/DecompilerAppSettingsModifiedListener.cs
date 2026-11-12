@@ -50,8 +50,8 @@ namespace dnSpy.Decompiler.ILSpy.Settings {
 #endif
 			if (refreshCSharp)
 				RefreshCode<Core.CSharp.CSharpDecompiler>();
-			if (refreshVB)
-				RefreshCode<Core.VisualBasic.VBDecompiler>();
+			// if (refreshVB)
+			// 	RefreshCode<Core.VisualBasic.VBDecompiler>();
 			if (refreshCSharp || refreshIL)
 				RefreshCode<Core.Mixed.ILWithCSharpDecompiler>();
 		}

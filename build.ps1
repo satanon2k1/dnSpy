@@ -12,6 +12,86 @@ $net_baseoutput = "dnSpy\dnSpy\bin\$configuration"
 $apphostpatcher_dir = "Build\AppHostPatcher"
 
 #
+# custom/diffing: every patches\*.patch file is applied to the ILSpy engine submodule before building.
+# A patch that is already applied is skipped, so running this script many times is safe.
+#
+$patches_dir = Join-Path $PSScriptRoot 'patches'
+$patch_target_dir = Join-Path $PSScriptRoot 'Extensions\ILSpy.Decompiler\ICSharpCode.Decompiler'
+
+function Invoke-Git {
+	# Runs git and returns its exit code. Output is hidden unless -ShowOutput is used.
+	# ErrorActionPreference is relaxed because Windows PowerShell turns native stderr output into errors.
+	param([string[]]$GitArgs, [switch]$ShowOutput)
+	$oldPreference = $ErrorActionPreference
+	$ErrorActionPreference = 'Continue'
+	try {
+		if ($ShowOutput) {
+			& git @GitArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
+		}
+		else {
+			& git @GitArgs 2>&1 | Out-Null
+		}
+		return $LASTEXITCODE
+	}
+	finally {
+		$ErrorActionPreference = $oldPreference
+	}
+}
+
+function Remove-OldBuildOutput {
+	# Delete the output of the targets that are about to be built, so no old file is left behind.
+	# Note: removing net10.0-windows also removes the self-contained win-x86/win-x64 output inside it.
+	$dirs = @()
+	if ($buildtfm -eq 'all') {
+		$dirs += $net_baseoutput
+	}
+	else {
+		if ($buildNetFramework) { $dirs += "$net_baseoutput\$netframework_tfm" }
+		if ($buildNet)          { $dirs += "$net_baseoutput\$net_tfm" }
+		if ($buildNetX86)       { $dirs += "$net_baseoutput\$net_tfm\win-x86" }
+		if ($buildNetX64)       { $dirs += "$net_baseoutput\$net_tfm\win-x64" }
+	}
+	foreach ($dir in $dirs) {
+		if (Test-Path $dir) {
+			Write-Host "Removing old build output: $dir"
+			Remove-Item -Recurse -Force $dir
+		}
+	}
+}
+
+function Apply-SubmodulePatches {
+	param([string]$PatchesDir, [string]$TargetDir)
+
+	$patches = @(Get-ChildItem -Path $PatchesDir -Filter *.patch -File -ErrorAction SilentlyContinue | Sort-Object Name)
+	if ($patches.Count -eq 0) {
+		Write-Host "No patches found in $PatchesDir"
+		return
+	}
+	if (-not (Test-Path (Join-Path $TargetDir '.git'))) {
+		throw "Submodule not found: $TargetDir. Run: git submodule update --init --recursive"
+	}
+
+	Write-Host "Applying $($patches.Count) patch(es) to $TargetDir"
+	foreach ($patch in $patches) {
+		$patchPath = $patch.FullName
+		if ((Invoke-Git -GitArgs @('-C', $TargetDir, 'apply', '--reverse', '--check', $patchPath)) -eq 0) {
+			Write-Host "  [already applied] $($patch.Name)"
+		}
+		elseif ((Invoke-Git -GitArgs @('-C', $TargetDir, 'apply', '--check', $patchPath)) -eq 0) {
+			if ((Invoke-Git -GitArgs @('-C', $TargetDir, 'apply', $patchPath) -ShowOutput) -ne 0) {
+				throw "Failed to apply patch: $($patch.Name)"
+			}
+			Write-Host "  [applied]         $($patch.Name)"
+		}
+		else {
+			Write-Host "  [CONFLICT]        $($patch.Name)"
+			Invoke-Git -GitArgs @('-C', $TargetDir, 'apply', '--check', $patchPath) -ShowOutput | Out-Null
+			throw "Patch $($patch.Name) does not apply: the submodule code has changed. Update the patch before building."
+		}
+	}
+}
+
+#
 # The reason we don't use dotnet build is that dotnet build doesn't support COM references yet https://github.com/dnSpy/dnSpy/issues/1053
 #
 
@@ -104,6 +184,10 @@ $buildNetFramework  = $buildtfm -eq 'all' -or $buildtfm -eq 'netframework'
 $buildNet           = $buildtfm -eq 'all' -or $buildtfm -eq 'net'
 $buildNetX86        = $buildtfm -eq 'all' -or $buildtfm -eq 'net-x86'
 $buildNetX64        = $buildtfm -eq 'all' -or $buildtfm -eq 'net-x64'
+
+# custom/diffing: 1) remove old build output, 2) apply patches, then build
+Remove-OldBuildOutput
+Apply-SubmodulePatches -PatchesDir $patches_dir -TargetDir $patch_target_dir
 
 if ($buildNetX86 -or $buildNetX64 -or $buildNet) {
     Write-Host 'Building AppHostPatcher tool'

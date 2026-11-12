@@ -23,7 +23,6 @@ using System.Text;
 using dnlib.DotNet;
 using dnSpy.Contracts.Decompiler;
 using ICSharpCode.Decompiler;
-using ICSharpCode.Decompiler.Ast;
 
 namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 	/// <summary>
@@ -31,7 +30,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 	/// is not thread safe and must only be accessed by the owner thread.
 	/// </summary>
 	sealed class AstBuilderState {
-		public readonly AstBuilder AstBuilder;
+		public readonly ICSharpCode.Decompiler.CSharp.CSharpAstBuilder AstBuilder;
 
 		/// <summary>
 		/// <see cref="StringBuilder"/> instance used by XML doc code. This is always in a random
@@ -44,7 +43,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 		bool lastModuleResult;
 
 		public AstBuilderState(int settingsVersion) {
-			AstBuilder = new AstBuilder(new DecompilerContext(settingsVersion, null, null, true));
+			AstBuilder = new ICSharpCode.Decompiler.CSharp.CSharpAstBuilder(new DecompilerContext(settingsVersion, null, null, true));
 			XmlDoc_StringBuilder = new StringBuilder();
 			hasXmlDocFile = new Dictionary<ModuleDef, bool>();
 		}

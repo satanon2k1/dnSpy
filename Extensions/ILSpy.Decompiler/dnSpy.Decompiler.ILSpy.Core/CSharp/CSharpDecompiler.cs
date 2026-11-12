@@ -30,9 +30,10 @@ using dnSpy.Decompiler.ILSpy.Core.Settings;
 using dnSpy.Decompiler.ILSpy.Core.Text;
 using dnSpy.Decompiler.ILSpy.Core.XmlDoc;
 using ICSharpCode.Decompiler;
-using ICSharpCode.Decompiler.Ast;
-using ICSharpCode.Decompiler.Ast.Transforms;
-using ICSharpCode.NRefactory.CSharp;
+using ICSharpCode.Decompiler.CSharp;
+using ICSharpCode.Decompiler.CSharp.OutputVisitor;
+using ICSharpCode.Decompiler.CSharp.Syntax;
+using ICSharpCode.Decompiler.CSharp.Transforms;
 
 namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 	sealed class DecompilerProvider : IDecompilerProvider {
@@ -50,10 +51,10 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 
 		public IEnumerable<IDecompiler> Create() {
 			yield return new CSharpDecompiler(decompilerSettingsService.CSharpVBDecompilerSettings, DecompilerConstants.CSHARP_ILSPY_ORDERUI);
-#if DEBUG
+//#if DEBUG
 			foreach (var l in CSharpDecompiler.GetDebugDecompilers(decompilerSettingsService.CSharpVBDecompilerSettings))
 				yield return l;
-#endif
+//#endif
 		}
 	}
 
@@ -76,13 +77,12 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 			OrderUI = orderUI;
 		}
 
-#if DEBUG
+//#if DEBUG
 		internal static IEnumerable<CSharpDecompiler> GetDebugDecompilers(CSharpVBDecompilerSettings langSettings) {
-			DecompilerContext context = new DecompilerContext(0, new ModuleDefUser("dummy"), CSharpMetadataTextColorProvider.Instance);
 			string lastTransformName = "no transforms";
 			double orderUI = DecompilerConstants.CSHARP_ILSPY_DEBUG_ORDERUI;
 			uint id = 0xBF67AF3F;
-			foreach (Type _transformType in TransformationPipeline.CreatePipeline(context).Select(v => v.GetType()).Distinct()) {
+			foreach (Type _transformType in ICSharpCode.Decompiler.CSharp.CSharpDecompiler.GetAstTransforms().Select(v => v.GetType()).Distinct()) {
 				Type transformType = _transformType; // copy for lambda
 				yield return new CSharpDecompiler(langSettings, orderUI++) {
 					transformAbortCondition = v => transformType.IsInstanceOfType(v),
@@ -98,7 +98,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 				showAllMembers = true
 			};
 		}
-#endif
+//#endif
 
 		public override string ContentTypeString => ContentTypesInternal.CSharpILSpy;
 		public override string GenericNameUI => DecompilerConstants.GENERIC_NAMEUI_CSHARP;
@@ -133,7 +133,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 
 			public SelectCtorTransform(MethodDef ctorDef) => this.ctorDef = ctorDef;
 
-			public void Run(AstNode compilationUnit) {
+			public void Run(AstNode compilationUnit, TransformContext context) {
 				ConstructorDeclaration? ctorDecl = null;
 				foreach (var node in compilationUnit.Children) {
 					if (node is ConstructorDeclaration ctor) {
@@ -196,7 +196,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 
 			public SelectFieldTransform(FieldDef field) => this.field = field;
 
-			public void Run(AstNode compilationUnit) {
+			public void Run(AstNode compilationUnit, TransformContext context) {
 				foreach (var child in compilationUnit.Children) {
 					if (child is EntityDeclaration) {
 						if (child.Annotation<FieldDef>() != field)
@@ -206,7 +206,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 			}
 		}
 
-		void AddFieldsAndCtors(AstBuilder codeDomBuilder, TypeDef declaringType, bool isStatic) {
+		void AddFieldsAndCtors(CSharpAstBuilder codeDomBuilder, TypeDef declaringType, bool isStatic) {
 			foreach (var field in declaringType.Fields) {
 				if (field.IsStatic == isStatic)
 					codeDomBuilder.AddField(field);
@@ -244,13 +244,13 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 			var astBuilder = state.AstBuilder;
 			astBuilder.RunTransformations(transformAbortCondition);
 			if (additionalTransform is not null) {
-				additionalTransform.Run(astBuilder.SyntaxTree);
+				additionalTransform.Run(astBuilder.SyntaxTree, null);
 			}
 			AddXmlDocumentation(ref state, langSettings.Settings, astBuilder);
 			astBuilder.GenerateCode(output);
 		}
 
-		internal static void AddXmlDocumentation(ref BuilderState state, DecompilerSettings settings, AstBuilder astBuilder) {
+		internal static void AddXmlDocumentation(ref BuilderState state, DecompilerSettings settings, CSharpAstBuilder astBuilder) {
 			if (settings.ShowXmlDocumentation) {
 				var module = state.AstBuilder.Context.CurrentModule;
 				var hasXmlDocFileTmp = state.State.HasXmlDocFile(module);
@@ -283,7 +283,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 			using (ctx.DisableAssemblyLoad()) {
 				var state = CreateAstBuilder(ctx, langSettings.Settings, currentModule: asm.ManifestModule);
 				try {
-					state.AstBuilder.AddAssembly(asm.ManifestModule, true, true, false);
+					state.AstBuilder.AddAssembly(asm.ManifestModule, true, false);
 					RunTransformsAndGenerateCode(ref state, output, ctx);
 				}
 				finally {
@@ -298,7 +298,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 			using (ctx.DisableAssemblyLoad()) {
 				var state = CreateAstBuilder(ctx, langSettings.Settings, currentModule: mod);
 				try {
-					state.AstBuilder.AddAssembly(mod, true, false, true);
+					state.AstBuilder.AddAssembly(mod, false, true);
 					RunTransformsAndGenerateCode(ref state, output, ctx);
 				}
 				finally {
@@ -308,8 +308,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 		}
 
 		BuilderState CreateAstBuilder(DecompilationContext ctx, DecompilerSettings settings, ModuleDef? currentModule = null, TypeDef? currentType = null, bool isSingleMember = false) {
-			if (currentModule is null)
-				currentModule = currentType?.Module;
+			currentModule ??= currentType?.Module;
 			if (isSingleMember) {
 				settings = settings.Clone();
 				settings.UsingDeclarations = false;
@@ -320,6 +319,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 			state.AstBuilder.Context.CancellationToken = ctx.CancellationToken;
 			state.AstBuilder.Context.CurrentType = currentType;
 			state.AstBuilder.Context.Settings = settings;
+			state.AstBuilder.InitializeTypeSystem(ctx.GetOrCreate<TypeSystemCache>().GetTypeSystem(currentModule, settings));
 			return state;
 		}
 
@@ -355,7 +355,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 		void TypeToString(IDecompilerOutput output, ConvertTypeOptions options, ITypeDefOrRef? type, IHasCustomAttribute? typeAttributes = null) {
 			if (type is null)
 				return;
-			AstType astType = AstBuilder.ConvertType(type, new StringBuilder(), typeAttributes, options);
+			AstType astType = ICSharpCode.Decompiler.CSharp.CSharpDecompiler.ConvertType(type, new StringBuilder(), typeAttributes, options);
 
 			if (WriteRefIfByRef(output, type.TryGetByRefSig(), typeAttributes as ParamDef)) {
 				if (astType is ComposedType composedType && composedType.HasRefSpecifier)
@@ -377,7 +377,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 				var accessor = property.GetMethod ?? property.SetMethod;
 				if (accessor is not null && accessor.HasOverrides) {
 					var methDecl = accessor.Overrides.First().MethodDeclaration;
-					var declaringType = methDecl is null ? null : methDecl.DeclaringType;
+					var declaringType = methDecl?.DeclaringType;
 					TypeToString(output, declaringType, includeNamespace: true);
 					output.Write(".", BoxedTextColor.Operator);
 				}
@@ -430,7 +430,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 				return true;
 			if (member is MethodDef md && (md.IsGetter || md.IsSetter || md.IsAddOn || md.IsRemoveOn))
 				return true;
-			return !AstBuilder.MemberIsHidden(member, settings);
+			return !ICSharpCode.Decompiler.CSharp.CSharpDecompiler.MemberIsHidden(member, settings);
 		}
 
 		public override bool ShowMember(IMemberRef member) => ShowMember(member, showAllMembers, langSettings.Settings);
@@ -474,7 +474,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 		void DecompileAssemblyInfo(DecompileAssemblyInfo info) {
 			var state = CreateAstBuilder(info.Context, langSettings.Settings, currentModule: info.Module);
 			try {
-				state.AstBuilder.AddAssembly(info.Module, true, info.Module.IsManifestModule, true);
+				state.AstBuilder.AddAssembly(info.Module, info.Module.IsManifestModule, true);
 				RunTransformsAndGenerateCode(ref state, info.Output, info.Context, info.KeepAllAttributes ? null : new AssemblyInfoTransform());
 			}
 			finally {
@@ -508,13 +508,13 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 		internal static DecompilerSettings CreateDecompilerSettings(DecompilerSettings settings, bool useUsingDeclarations) {
 			var newOne = settings.Clone();
 			newOne.UsingDeclarations = useUsingDeclarations;
-			newOne.FullyQualifyAllTypes = !useUsingDeclarations;
-			newOne.RemoveNewDelegateClass = useUsingDeclarations;
+			//newOne.FullyQualifyAllTypes = !useUsingDeclarations;
+			newOne.UseImplicitMethodGroupConversion = useUsingDeclarations;
 			newOne.ForceShowAllMembers = false;
 			return newOne;
 		}
 
-		internal static DecompiledBodyKind GetDecompiledBodyKind(DecompileTypeMethods info, AstBuilder builder, MethodDef method) {
+		internal static DecompiledBodyKind GetDecompiledBodyKind(DecompileTypeMethods info, CSharpAstBuilder builder, MethodDef method) {
 			if (info.DecompileHidden)
 				return DecompiledBodyKind.Empty;
 			if (info.ShowAll || info.Methods.Contains(method))

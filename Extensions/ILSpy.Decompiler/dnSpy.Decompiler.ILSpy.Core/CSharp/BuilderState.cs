@@ -19,7 +19,6 @@
 
 using System;
 using dnSpy.Contracts.Decompiler;
-using ICSharpCode.Decompiler.Ast;
 
 namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 	/// <summary>
@@ -27,7 +26,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.CSharp {
 	/// gets called.
 	/// </summary>
 	readonly struct BuilderState : IDisposable {
-		public AstBuilder AstBuilder => State.AstBuilder;
+		public ICSharpCode.Decompiler.CSharp.CSharpAstBuilder AstBuilder => State.AstBuilder;
 
 		public readonly AstBuilderState State;
 		readonly BuilderCache cache;

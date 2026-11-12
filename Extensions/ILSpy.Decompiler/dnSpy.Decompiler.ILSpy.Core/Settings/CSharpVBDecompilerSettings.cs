@@ -25,6 +25,7 @@ using dnSpy.Contracts.Decompiler;
 using dnSpy.Decompiler.ILSpy.Core.Properties;
 using dnSpy.Decompiler.Settings;
 using ICSharpCode.Decompiler;
+using ICSharpCode.Decompiler.CSharp;
 
 namespace dnSpy.Decompiler.ILSpy.Core.Settings {
 	sealed class CSharpVBDecompilerSettings : DecompilerSettingsBase {
@@ -35,7 +36,8 @@ namespace dnSpy.Decompiler.ILSpy.Core.Settings {
 		public override event EventHandler? VersionChanged;
 
 		public CSharpVBDecompilerSettings(DecompilerSettings? decompilerSettings = null) {
-			this.decompilerSettings = decompilerSettings ?? new DecompilerSettings();
+			this.decompilerSettings = decompilerSettings ?? new DecompilerSettings(LanguageVersion.CSharp11_0)
+				{ FileScopedNamespaces = false, NumericIntPtr = false };
 			options = CreateOptions().ToArray();
 			this.decompilerSettings.SettingsVersionChanged += DecompilerSettings_SettingsVersionChanged;
 		}
@@ -218,21 +220,21 @@ namespace dnSpy.Decompiler.ILSpy.Core.Settings {
 				Description = dnSpy_Decompiler_ILSpy_Core_Resources.DecompilerSettings_MemberAddPrivateModifier,
 				Name = DecompilerOptionConstants.MemberAddPrivateModifier_NAME,
 			};
-			yield return new DecompilerOption<bool>(DecompilerOptionConstants.RemoveNewDelegateClass_GUID,
-						() => decompilerSettings.RemoveNewDelegateClass, a => decompilerSettings.RemoveNewDelegateClass = a) {
-				Description = dnSpy_Decompiler_ILSpy_Core_Resources.DecompilerSettings_RemoveNewDelegateClass,
-				Name = DecompilerOptionConstants.RemoveNewDelegateClass_NAME,
-			};
+			// yield return new DecompilerOption<bool>(DecompilerOptionConstants.RemoveNewDelegateClass_GUID,
+			// 			() => decompilerSettings.RemoveNewDelegateClass, a => decompilerSettings.RemoveNewDelegateClass = a) {
+			// 	Description = dnSpy_Decompiler_ILSpy_Core_Resources.DecompilerSettings_RemoveNewDelegateClass,
+			// 	Name = DecompilerOptionConstants.RemoveNewDelegateClass_NAME,
+			// };
 			yield return new DecompilerOption<bool>(DecompilerOptionConstants.HexadecimalNumbers_GUID,
 						() => decompilerSettings.HexadecimalNumbers, a => decompilerSettings.HexadecimalNumbers = a) {
 				Description = dnSpy_Decompiler_ILSpy_Core_Resources.DecompilerSettings_HexadecimalNumbers,
 				Name = DecompilerOptionConstants.HexadecimalNumbers_NAME,
 			};
-			yield return new DecompilerOption<bool>(DecompilerOptionConstants.EmitCalliAsInvocationExpression_GUID,
-				() => decompilerSettings.EmitCalliAsInvocationExpression, a => decompilerSettings.EmitCalliAsInvocationExpression = a) {
-				Description = dnSpy_Decompiler_ILSpy_Core_Resources.DecompilerSettings_EmitCalliAsInvocationExpression,
-				Name = DecompilerOptionConstants.EmitCalliAsInvocationExpression_NAME,
-			};
+			// yield return new DecompilerOption<bool>(DecompilerOptionConstants.EmitCalliAsInvocationExpression_GUID,
+			// 	() => decompilerSettings.EmitCalliAsInvocationExpression, a => decompilerSettings.EmitCalliAsInvocationExpression = a) {
+			// 	Description = dnSpy_Decompiler_ILSpy_Core_Resources.DecompilerSettings_EmitCalliAsInvocationExpression,
+			// 	Name = DecompilerOptionConstants.EmitCalliAsInvocationExpression_NAME,
+			// };
 			yield return new DecompilerOption<bool>(DecompilerOptionConstants.InsertParenthesesForReadability_GUID,
 				() => decompilerSettings.InsertParenthesesForReadability, a => decompilerSettings.InsertParenthesesForReadability = a) {
 				Description = dnSpy_Decompiler_ILSpy_Core_Resources.DecompilerSettings_InsertParenthesesForReadability,

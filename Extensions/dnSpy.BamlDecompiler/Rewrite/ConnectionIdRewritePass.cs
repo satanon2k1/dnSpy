@@ -30,14 +30,19 @@ using dnSpy.BamlDecompiler.Baml;
 using dnSpy.BamlDecompiler.Properties;
 using dnSpy.BamlDecompiler.Xaml;
 using dnSpy.Contracts.Decompiler;
-using ICSharpCode.Decompiler;
-using ICSharpCode.Decompiler.ILAst;
+using ICSharpCode.Decompiler.CSharp;
+using ICSharpCode.Decompiler.IL;
+using ICSharpCode.Decompiler.IL.Transforms;
+using ICSharpCode.Decompiler.Metadata;
+using ICSharpCode.Decompiler.TypeSystem;
+using ICSharpCode.Decompiler.Util;
 
 namespace dnSpy.BamlDecompiler.Rewrite {
 	sealed class ConnectionIdRewritePass : IRewritePass {
 		static bool Impl(MethodDef method, MethodDef ifaceMethod) {
 			if (method.HasOverrides) {
-				var comparer = new SigComparer(SigComparerOptions.CompareDeclaringTypes | SigComparerOptions.PrivateScopeIsComparable);
+				var comparer =
+					new SigComparer(SigComparerOptions.CompareDeclaringTypes | SigComparerOptions.PrivateScopeIsComparable);
 				if (method.Overrides.Any(m => comparer.Equals(m.MethodDeclaration, ifaceMethod)))
 					return true;
 			}
@@ -59,14 +64,16 @@ namespace dnSpy.BamlDecompiler.Rewrite {
 			var componentConnectorConnect = ctx.Baml.KnownThings.Types(KnownTypes.IComponentConnector).TypeDef.FindMethod("Connect");
 			var styleConnectorConnect = ctx.Baml.KnownThings.Types(KnownTypes.IStyleConnector).TypeDef.FindMethod("Connect");
 
-			var connIds = new Dictionary<int, Action<XamlContext, XElement>>();
+			var ts = new DecompilerTypeSystem(new MetadataFile(ctx.Module), TypeSystemOptions.Default);
 
-			if (!CollectConnectionIds(ctx, componentConnectorConnect, type, connIds)) {
+			var connIds = new Dictionary<long, Action<XamlContext, XElement>>();
+
+			if (!CollectConnectionIds(ctx, ts, componentConnectorConnect, type, connIds)) {
 				var msg = dnSpy_BamlDecompiler_Resources.Error_IComponentConnectorConnectCannotBeParsed;
 				document.Root.AddBeforeSelf(new XComment(string.Format(msg, type.ReflectionFullName)));
 			}
 
-			if (!CollectConnectionIds(ctx, styleConnectorConnect, type, connIds)) {
+			if (!CollectConnectionIds(ctx, ts, styleConnectorConnect, type, connIds)) {
 				var msg = dnSpy_BamlDecompiler_Resources.Error_IStyleConnectorConnectCannotBeParsed;
 				document.Root.AddBeforeSelf(new XComment(string.Format(msg, type.ReflectionFullName)));
 			}
@@ -76,7 +83,7 @@ namespace dnSpy.BamlDecompiler.Rewrite {
 			}
 		}
 
-		bool CollectConnectionIds(XamlContext ctx, MethodDef connectInterfaceMethod, TypeDef currentType, Dictionary<int, Action<XamlContext, XElement>> allConnIds) {
+		bool CollectConnectionIds(XamlContext ctx, IDecompilerTypeSystem ts, MethodDef connectInterfaceMethod, TypeDef currentType, Dictionary<long, Action<XamlContext, XElement>> allConnIds) {
 			MethodDef connect = null;
 			foreach (var method in currentType.Methods) {
 				if (Impl(method, connectInterfaceMethod)) {
@@ -86,9 +93,9 @@ namespace dnSpy.BamlDecompiler.Rewrite {
 			}
 
 			if (connect is not null) {
-				Dictionary<int, Action<XamlContext, XElement>> connIds = null;
+				Dictionary<long, Action<XamlContext, XElement>> connIds = null;
 				try {
-					connIds = ExtractConnectionId(ctx, connect);
+					connIds = ExtractConnectionId(ctx, ts, connect);
 				}
 				catch {
 				}
@@ -103,26 +110,26 @@ namespace dnSpy.BamlDecompiler.Rewrite {
 			return true;
 		}
 
-		static void ProcessElement(XamlContext ctx, XElement elem, Dictionary<int, Action<XamlContext, XElement>> connIds) {
+		static void ProcessElement(XamlContext ctx, XElement elem, Dictionary<long, Action<XamlContext, XElement>> connIds) {
 			CheckConnectionId(ctx, elem, connIds);
 			foreach (var child in elem.Elements()) {
 				ProcessElement(ctx, child, connIds);
 			}
 		}
 
-		static void CheckConnectionId(XamlContext ctx, XElement elem, Dictionary<int, Action<XamlContext, XElement>> connIds) {
-			foreach (var connId in elem.Annotations<BamlConnectionId>()) {
-				if (!connIds.TryGetValue((int)connId.Id, out var cb)) {
-					elem.AddBeforeSelf(new XComment(string.Format(dnSpy_BamlDecompiler_Resources.Error_UnknownConnectionId, connId.Id)));
-					return;
-				}
+		static void CheckConnectionId(XamlContext ctx, XElement elem, Dictionary<long, Action<XamlContext, XElement>> connIds) {
+			var connId = elem.Annotation<BamlConnectionId>();
+			if (connId is null)
+				return;
 
-				cb(ctx, elem);
+			if (!connIds.TryGetValue(connId.Id, out var cb)) {
+				elem.AddBeforeSelf(new XComment(string.Format(dnSpy_BamlDecompiler_Resources.Error_UnknownConnectionId, connId.Id)));
+				return;
 			}
 		}
 
 		struct FieldAssignment {
-			public IField Field;
+			public dnlib.DotNet.IField Field;
 
 			public void Callback(XamlContext ctx, XElement elem) {
 				var xName = ctx.GetKnownNamespace("Name", XamlContext.KnownNamespace_Xaml, elem);
@@ -175,97 +182,93 @@ namespace dnSpy.BamlDecompiler.Rewrite {
 			public void Callback(XamlContext ctx, XElement elem) => elem.AddBeforeSelf(new XComment(Msg));
 		}
 
-		Dictionary<int, Action<XamlContext, XElement>> ExtractConnectionId(XamlContext ctx, MethodDef method) {
-			var context = new DecompilerContext(0, method.Module) {
-				CurrentType = method.DeclaringType,
-				CurrentMethod = method,
-				CancellationToken = ctx.CancellationToken
-			};
-			var body = new ILBlock(new ILAstBuilder().Build(method, true, context));
-			new ILAstOptimizer().Optimize(context, body, out _, out _, out _);
+		Dictionary<long, Action<XamlContext, XElement>> ExtractConnectionId(XamlContext ctx, IDecompilerTypeSystem ts, MethodDef method) {
+			var connectTs = ts.MainModule.GetDefinition(method);
 
-			var infos = GetCaseBlocks(body);
-			if (infos is null)
-				return null;
-			var connIds = new Dictionary<int, Action<XamlContext, XElement>>();
+			var genericContext = new GenericContext(connectTs.DeclaringType?.TypeParameters, connectTs.TypeParameters);
+
+			// decompile method and optimize the switch
+			var ilReader = new ILReader(ts.MainModule);
+			var function = ilReader.ReadIL(method, genericContext, ILFunctionKind.TopLevelFunction, ctx.CancellationToken);
+
+			var context = new ILTransformContext(function, ts) { CancellationToken = ctx.CancellationToken };
+			function.RunTransforms(CSharpDecompiler.GetILTransforms(), context);
+
+			var infos = GetCaseBlocks(function);
+
+			var connIds = new Dictionary<long, Action<XamlContext, XElement>>();
 			foreach (var info in infos) {
 				Action<XamlContext, XElement> cb = null;
 
-				for (int i = 0; i < info.nodes.Count; i++) {
-					if (MatchEventSetterCreation(info.nodes, ref i, out var evAttach)) {
-						cb += evAttach.Callback;
-						continue;
-					}
+				var topLevelInstr = info.topLevelInstr;
 
-					var node = info.nodes[i];
-					if (node is not ILExpression expr)
-						continue;
+				Block block = null;
+				if (topLevelInstr is Branch br) {
+					block = br.TargetBlock;
+				}
+				else if (topLevelInstr is Block blk) {
+					block = blk;
+				}
 
-					switch (expr.Code) {
-					case ILCode.Stfld:
-						cb += new FieldAssignment {
-							Field = (IField)expr.Operand
-						}.Callback;
-						break;
-
-					case ILCode.Call:
-					case ILCode.Callvirt:
-						var operand = (IMethod)expr.Operand;
-						if (operand.Name == "AddHandler" && operand.DeclaringType.FullName == "System.Windows.UIElement") {
-							// Attached event
-							var re = expr.Arguments[1];
-							var ctor = expr.Arguments[2];
-							var reField = re.Operand as IField;
-
-							if (reField is null || re.Code != ILCode.Ldsfld || ctor.Code != ILCode.Newobj ||
-								ctor.Arguments.Count != 2 || ctor.Arguments[1].Code != ILCode.Ldftn && ctor.Arguments[1].Operand is IMethod) {
-								cb += new Error { Msg = string.Format(dnSpy_BamlDecompiler_Resources.Error_AttachedEvent, reField.Name) }.Callback;
-								break;
-							}
-
-							var handler = (IMethod)ctor.Arguments[1].Operand;
-
-							string evName = reField.Name;
-							if (evName.EndsWith("Event", StringComparison.Ordinal) && evName.Length > 5)
-								evName = evName.Substring(0, evName.Length - 5);
-
-							cb += new EventAttachment {
-								AttachedType = reField.DeclaringType.ResolveTypeDef() ?? reField.DeclaringType,
-								EventName = evName,
-								MethodName = handler.Name
-							}.Callback;
+				if (block is not null) {
+					for (int index = 0; index < block.Instructions.Count;) {
+						var instr = block.Instructions[index];
+						if (MatchEventSetterCreation(block, ref index, out var eventName, out var handler)) {
+							cb += new EventAttachment { EventName = eventName, MethodName = handler }.Callback;
+							continue;
 						}
-						else {
-							// CLR event
-							var add = operand.ResolveMethodDef();
 
-							string eventName = null;
-							if (add is not null) {
-								var ev = add.DeclaringType.Events.FirstOrDefault(e => e.AddMethod == add);
-								eventName = ev?.Name;
-							}
-							else if (operand.Name.StartsWith("add_") && operand.Name.Length > 4)
-								eventName = operand.Name.Substring(4);
-
-							var ctor = expr.Arguments[1];
-							if (eventName is null || ctor.Code != ILCode.Newobj ||
-								ctor.Arguments.Count != 2 || ctor.Arguments[1].Code != ILCode.Ldftn && ctor.Arguments[1].Operand is IMethod) {
-								cb += new Error { Msg = string.Format(dnSpy_BamlDecompiler_Resources.Error_AttachedEvent, add.Name) }.Callback;
-								break;
-							}
-							var handler = (IMethod)ctor.Arguments[1].Operand;
-
-							cb += new EventAttachment {
-								EventName = eventName,
-								MethodName = handler.Name
-							}.Callback;
+						if (instr.MatchStFld(out _, out var fld, out var value) &&
+							value.MatchCastClass(out var arg, out _) && arg.MatchLdLoc(out var loc) &&
+							loc.Kind == VariableKind.Parameter && loc.Index == 1) {
+							cb += new FieldAssignment { Field = fld.MetadataToken }.Callback;
 						}
-						break;
+						else if (instr is CallInstruction call && call.OpCode != OpCode.NewObj) {
+							var operand = call.Method;
+							if (operand.Name == "AddHandler" && call.Arguments.Count == 3 && operand.Parameters.Count == 2) {
+								if (!call.Arguments[1].MatchLdsFld(out var field) ||
+									!MatchEventHandlerCreation(call.Arguments[2], out var handlerName)) {
+									cb += new Error {
+										Msg = string.Format(dnSpy_BamlDecompiler_Resources.Error_AttachedEvent, field.Name)
+									}.Callback;
+									break;
+								}
+
+								string evName = field.Name;
+								if (evName.EndsWith("Event"))
+									evName = evName.Substring(0, evName.Length - 5);
+
+								cb += new EventAttachment {
+									AttachedType = field.MetadataToken.DeclaringType.ResolveTypeDefThrow(),
+									EventName = evName,
+									MethodName = handlerName
+								}.Callback;
+							}
+							else if (call.Arguments.Count == 2) {
+								var add = call.Method;
+								var ev = add.MetadataToken?.DeclaringType.Resolve().Events.FirstOrDefault(e =>
+									e.AddMethod == add.MetadataToken);
+
+								if (ev is null || !MatchEventHandlerCreation(call.Arguments[1], out var handlerName)) {
+									cb += new Error {
+										Msg = string.Format(dnSpy_BamlDecompiler_Resources.Error_AttachedEvent, add.Name)
+									}.Callback;
+									break;
+								}
+
+								cb += new EventAttachment {
+									EventName = ev.Name,
+									MethodName = handlerName
+								}.Callback;
+							}
+						}
+
+						index++;
 					}
 				}
 
 				if (cb is not null) {
-					foreach (var id in info.connIds)
+					foreach (var id in info.connIds.Values)
 						connIds[id] = cb;
 				}
 			}
@@ -273,164 +276,116 @@ namespace dnSpy.BamlDecompiler.Rewrite {
 			return connIds;
 		}
 
-		static bool MatchEventSetterCreation(List<ILNode> body, ref int i,  out EventAttachment @event) {
-			@event = default;
-			if (!body[i].Match(ILCode.Stloc, out ILVariable v, out ILExpression initializer))
-				return false;
-			if (!initializer.Match(ILCode.Newobj, out IMethod ctor, out List<ILExpression> args) || args.Count != 0)
-				return false;
-			if (ctor.DeclaringType.FullName != "System.Windows.EventSetter")
-				return false;
+		static List<(LongSet connIds, ILInstruction topLevelInstr)> GetCaseBlocks(ILFunction function) {
+			var list = new List<(LongSet, ILInstruction)>();
 
-			if (!body[i + 1].Match(ILCode.CallvirtSetter, out IMethod setEventMethod, out args) || args.Count != 2)
-				return false;
-			if (!args[0].MatchLdloc(v))
-				return false;
-			if (setEventMethod.Name != "set_Event")
-				return false;
-			if (!args[1].Match(ILCode.Ldsfld, out IField eventField))
-				return false;
+			var block = function.Body.Children.OfType<Block>().First();
+			var ilSwitch = block.Descendants.OfType<SwitchInstruction>().FirstOrDefault();
 
-			if (!body[i + 2].Match(ILCode.CallvirtSetter, out IMethod setHandlerMethod, out args) || args.Count != 2)
-				return false;
-			if (!args[0].MatchLdloc(v))
-				return false;
-			if (setHandlerMethod.Name != "set_Handler")
-				return false;
-			if (!args[1].Match(ILCode.Newobj, out IMethod _, out args) || args.Count != 2)
-				return false;
-			if (!args[1].Match(ILCode.Ldftn, out IMethod handlerMethod))
-				return false;
+			if (ilSwitch != null) {
+				foreach (var section in ilSwitch.Sections) {
+					list.Add((section.Labels, section.Body));
+				}
+			}
+			else {
+				foreach (var ifInst in function.Descendants.OfType<IfInstruction>()) {
+					if (ifInst.Condition is not Comp comp)
+						continue;
+					if (comp.Kind != ComparisonKind.Inequality && comp.Kind != ComparisonKind.Equality)
+						continue;
+					if (!comp.Right.MatchLdcI4(out int id))
+						continue;
+					var inst = comp.Kind == ComparisonKind.Inequality
+						? ifInst.FalseInst
+						: ifInst.TrueInst;
 
-			if (!body[i + 3].Match(ILCode.Callvirt, out IMethod addMethod, out args) || args.Count != 2)
-				return false;
-			if (!args[1].MatchLdloc(v))
-				return false;
-			if (addMethod.Name != "Add")
-				return false;
-			if (!args[0].Match(ILCode.CallvirtGetter, out IMethod getSettersMethod, out ILExpression arg))
-				return false;
-			if (getSettersMethod.Name != "get_Setters")
-				return false;
-			if (!arg.Match(ILCode.Castclass, out ITypeDefOrRef castType, out arg))
-				return false;
-			if (castType.FullName != "System.Windows.Style")
-				return false;
-			if (!arg.Match(ILCode.Ldloc, out ILVariable v2) || !v2.IsParameter || v2.OriginalParameter.MethodSigIndex != 1)
-				return false;
+					list.Add((new LongSet(id), inst));
+				}
+			}
 
+			return list;
+		}
 
-			string evName = eventField.Name;
-			if (evName.EndsWith("Event", StringComparison.Ordinal) && evName.Length > 5)
-				evName = evName.Substring(0, evName.Length - 5);
+		// stloc v(newobj EventSetter..ctor())
+		// callvirt set_Event(ldloc v, ldsfld eventName)
+		// callvirt set_Handler(ldloc v, newobj RoutedEventHandler..ctor(ldloc this, ldftn eventHandler))
+		// callvirt Add(callvirt get_Setters(castclass System.Windows.Style(ldloc target)), ldloc v)
+		static bool MatchEventSetterCreation(Block b, ref int pos, out string eventName, out string handlerName) {
+			eventName = null;
+			handlerName = null;
+			if (!b.FinalInstruction.MatchNop()) {
+				pos = b.Instructions.Count;
+				return false;
+			}
 
-			i += 3;
+			var instr = b.Instructions;
+			// stloc v(newobj EventSetter..ctor())
+			if (!instr[pos].MatchStLoc(out var v, out var initializer))
+				return false;
+			if (!(initializer is NewObj newObj
+				  && newObj.Method.DeclaringType.FullName == "System.Windows.EventSetter"
+				  && newObj.Arguments.Count == 0)) {
+				return false;
+			}
 
-			@event = new EventAttachment { EventName = evName, MethodName = handlerMethod.Name };
+			//callvirt set_Event(ldloc v, ldsfld eventName)
+			if (!(instr[pos + 1] is CallVirt setEventCall && setEventCall.Arguments.Count == 2))
+				return false;
+			if (!setEventCall.Method.IsAccessor)
+				return false;
+			if (!setEventCall.Arguments[0].MatchLdLoc(v))
+				return false;
+			if (setEventCall.Method.Name != "set_Event")
+				return false;
+			if (!setEventCall.Arguments[1].MatchLdsFld(out var eventField))
+				return false;
+			eventName = eventField.Name;
+			if (eventName.EndsWith("Event")) {
+				eventName = eventName.Remove(eventName.Length - 5);
+			}
+
+			// callvirt set_Handler(ldloc v, newobj RoutedEventHandler..ctor(ldloc this, ldftn eventHandler))
+			if (!(instr[pos + 2] is CallVirt setHandlerCall && setHandlerCall.Arguments.Count == 2))
+				return false;
+			if (!setHandlerCall.Method.IsAccessor)
+				return false;
+			if (!setHandlerCall.Arguments[0].MatchLdLoc(v))
+				return false;
+			if (setHandlerCall.Method.Name != "set_Handler")
+				return false;
+			if (!MatchEventHandlerCreation(setHandlerCall.Arguments[1], out handlerName))
+				return false;
+			// callvirt Add(callvirt get_Setters(castclass System.Windows.Style(ldloc target)), ldloc v)
+			if (!(instr[pos + 3] is CallVirt addCall && addCall.Arguments.Count == 2))
+				return false;
+			if (addCall.Method.Name != "Add")
+				return false;
+			if (!(addCall.Arguments[0] is CallVirt getSettersCall && getSettersCall.Arguments.Count == 1))
+				return false;
+			if (!getSettersCall.Method.IsAccessor)
+				return false;
+			if (getSettersCall.Method.Name != "get_Setters")
+				return false;
+			if (!getSettersCall.Arguments[0].MatchCastClass(out var arg, out var type))
+				return false;
+			if (type.FullName != "System.Windows.Style")
+				return false;
+			if (!(arg.MatchLdLoc(out var t) && t.Kind == VariableKind.Parameter && t.Index == 1))
+				return false;
+			if (!addCall.Arguments[1].MatchLdLoc(v))
+				return false;
+			pos += 4;
 			return true;
 		}
 
-		static List<(IList<int> connIds, List<ILNode> nodes)> GetCaseBlocks(ILBlock method) {
-			var list = new List<(IList<int>, List<ILNode>)>();
-			var body = method.Body;
-			if (body.Count == 0)
-				return list;
-
-			var sw = method.GetSelfAndChildrenRecursive<ILSwitch>().FirstOrDefault();
-			if (sw is not null) {
-				foreach (var lbl in sw.CaseBlocks) {
-					if (lbl.Values is null)
-						continue;
-					list.Add((lbl.Values, lbl.Body));
-				}
-				return list;
-			}
-
-			return AnalyzeBody(body, list, true) == true ? list : null;
-		}
-
-		static bool? AnalyzeBody(List<ILNode> body, List<(IList<int>, List<ILNode>)> list, bool isRoot) {
-			if (body.Count == 0)
+		static bool MatchEventHandlerCreation(ILInstruction inst, out string handlerName) {
+			handlerName = "";
+			if (inst is not NewObj newObj || newObj.Arguments.Count != 2)
 				return false;
-			int pos = 0;
-			for (;;) {
-				if (pos >= body.Count)
-					return isRoot;
-				var current = body[pos];
-				if (current is not ILCondition cond) {
-					if (current.Match(ILCode.Ret))
-						return true;
-					if (current.Match(ILCode.Stfld, out IField _, out var ldthis, out var ldci4) && ldthis.MatchThis() && ldci4.MatchLdcI4(1))
-						return true;
-
-					return null;
-				}
-				pos++;
-				if (cond.TrueBlock is null || cond.FalseBlock is null)
-					return null;
-
-				if (!MatchConditionExpression(cond.Condition, out bool isEq, out int val))
-					return null;
-
-				if (isEq) {
-					if (cond.TrueBlock.Body.Count < 1)
-						return null;
-
-					list.Add((new[] { val }, cond.TrueBlock.Body));
-
-					var falseBlockExits = AnalyzeBody(cond.FalseBlock.Body, list, false);
-					if (falseBlockExits is null)
-						return null;
-					if (falseBlockExits.Value && cond.TrueBlock.Body.Last().Match(ILCode.Ret))
-						return true;
-				}
-				else if (cond.FalseBlock.Body.Count == 0) {
-					var remainingBody = body.Skip(pos).ToList();
-					if (remainingBody.Count < 1)
-						return null;
-
-					list.Add((new[] { val }, remainingBody));
-
-					var trueBlockExits = AnalyzeBody(cond.TrueBlock.Body, list, false);
-					if (trueBlockExits is null)
-						return null;
-					if (isRoot || trueBlockExits.Value && remainingBody.Last().Match(ILCode.Ret))
-						return true;
-				}
-				else {
-					if (cond.FalseBlock.Body.Count < 1)
-						return null;
-
-					list.Add((new[] { val }, cond.FalseBlock.Body));
-
-					var trueBlockExits = AnalyzeBody(cond.TrueBlock.Body, list, false);
-					if (trueBlockExits is null)
-						return null;
-					if (trueBlockExits.Value && cond.FalseBlock.Body.Last().Match(ILCode.Ret))
-						return true;
-				}
-			}
-		}
-
-		static bool MatchConditionExpression(ILExpression condExpr, out bool isEq, out int val) {
-			isEq = true;
-			val = 0;
-			for (;;) {
-				if (!condExpr.Match(ILCode.LogicNot, out ILExpression expr))
-					break;
-				isEq = !isEq;
-				condExpr = expr;
-			}
-			if (condExpr.Code != ILCode.Ceq && condExpr.Code != ILCode.Cne)
+			var ldftn = newObj.Arguments[1];
+			if (ldftn.OpCode != OpCode.LdFtn && ldftn.OpCode != OpCode.LdVirtFtn)
 				return false;
-			if (condExpr.Arguments.Count != 2)
-				return false;
-			if (!condExpr.Arguments[0].Match(ILCode.Ldloc, out ILVariable v) || v.OriginalParameter?.Index != 1)
-				return false;
-			if (!condExpr.Arguments[1].Match(ILCode.Ldc_I4, out val))
-				return false;
-			if (condExpr.Code == ILCode.Cne)
-				isEq ^= true;
+			handlerName = ((IInstructionWithMethodOperand)ldftn).Method.Name;
 			return true;
 		}
 	}

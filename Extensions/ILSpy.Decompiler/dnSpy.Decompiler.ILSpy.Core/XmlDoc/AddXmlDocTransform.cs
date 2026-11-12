@@ -17,10 +17,15 @@
 // DEALINGS IN THE SOFTWARE.
 
 using System;
+using System.IO;
+using System.Linq;
 using System.Text;
+using System.Xml;
 using dnlib.DotNet;
 using dnSpy.Contracts.Decompiler.XmlDoc;
-using ICSharpCode.NRefactory.CSharp;
+using ICSharpCode.Decompiler.CSharp;
+using ICSharpCode.Decompiler.CSharp.Syntax;
+using ICSharpCode.Decompiler.TypeSystem;
 
 namespace dnSpy.Decompiler.ILSpy.Core.XmlDoc {
 	/// <summary>
@@ -37,13 +42,13 @@ namespace dnSpy.Decompiler.ILSpy.Core.XmlDoc {
 				if (mr is not null && mr.Module is not null) {
 					var xmldoc = XmlDocLoader.LoadDocumentation(mr.Module);
 					if (xmldoc is not null) {
-						var doc = xmldoc.GetDocumentation(XmlDocKeyProvider.GetKey(mr, stringBuilder)) ?? xmldoc.GetDocumentation(XmlDocKeyProvider.GetKey(mr, stringBuilder, XmlDocCompiler.MSVC));
+						var doc = xmldoc.GetDocumentation(XmlDocKeyProvider.GetKey(mr, stringBuilder));
 						if (!string2.IsNullOrEmpty(doc)) {
 							InsertXmlDocumentation(node, doc);
 						}
 					}
 				}
-				if (!(node is TypeDeclaration))
+				if (node is not TypeDeclaration)
 					return; // don't recurse into attributed nodes, except for type definitions
 			}
 			foreach (AstNode child in node.Children)
@@ -57,7 +62,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.XmlDoc {
 					stringBuilder.Append(' ');
 					info.Value.WriteTo(stringBuilder);
 				}
-				node.Parent.InsertChildBefore(node, new Comment(stringBuilder.ToString(), CommentType.Documentation), Roles.Comment);
+				node.Parent!.InsertChildBefore(node, new Comment(stringBuilder.ToString(), CommentType.Documentation), Roles.Comment);
 			}
 		}
 	}

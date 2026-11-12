@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
@@ -100,7 +100,7 @@ namespace dnSpy.Decompiler.ILSpy.Core.Mixed {
 		(MethodDebugInfo debugInfo, MethodDebugInfo? stateMachineDebugInfo) TryDecompileCode(MethodDef method, DecompilationContext ctx, DecompilerOutputImpl output, bool disableStateMachineDecompilation) {
 			output.Initialize(method);
 			var settings = csharpLangSettings.Settings.Clone();
-			settings.UsingDeclarations = false;
+			//settings.UsingDeclarations = false;
 			if (disableStateMachineDecompilation) {
 				settings.AsyncAwait = false;
 				settings.YieldReturn = false;
@@ -111,6 +111,8 @@ namespace dnSpy.Decompiler.ILSpy.Core.Mixed {
 				state.AstBuilder.Context.CurrentType = method.DeclaringType;
 				state.AstBuilder.Context.CancellationToken = ctx.CancellationToken;
 				state.AstBuilder.Context.Settings = settings;
+				state.AstBuilder.InitializeTypeSystem(ctx.GetOrCreate<ICSharpCode.Decompiler.TypeSystemCache>()
+					.GetTypeSystem(state.AstBuilder.Context.CurrentModule, settings));
 				state.AstBuilder.AddMethod(method);
 				state.AstBuilder.RunTransformations();
 				state.AstBuilder.GenerateCode(output);

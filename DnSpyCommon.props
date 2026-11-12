@@ -59,6 +59,8 @@
     <NuGetVersion>7.9.0</NuGetVersion>
     <DbgShimVersion>10.0.750501</DbgShimVersion>
     <DotNetPackageVersion>10.0.14</DotNetPackageVersion>
+    <!-- The new ILSpy engine submodule (ICSharpCode.Decompiler.csproj) still uses this old property name -->
+    <SCImmutableVersion>$(DotNetPackageVersion)</SCImmutableVersion>
     <MessagePackVersion>2.5.307</MessagePackVersion>
   </PropertyGroup>
 
