@@ -1,0 +1,29 @@
+diff --git a/ICSharpCode.Decompiler/CSharp/OutputVisitor/CSharpOutputVisitor.cs b/ICSharpCode.Decompiler/CSharp/OutputVisitor/CSharpOutputVisitor.cs
+index 4215aef27..2314c5cc0 100644
+--- a/ICSharpCode.Decompiler/CSharp/OutputVisitor/CSharpOutputVisitor.cs
++++ b/ICSharpCode.Decompiler/CSharp/OutputVisitor/CSharpOutputVisitor.cs
+@@ -818,8 +818,23 @@ protected virtual void WriteMethodBody(BlockStatement body, BraceStyle style, bo
+ 
+ 		protected virtual void WriteAttributes(IEnumerable<AttributeSection> attributes)
+ 		{
++			// Patch diffing: sort attributes by their text so the order is stable between builds
++			// (metadata order of custom attributes is not deterministic). See docs/blog-explained.md.
++			var l = attributes.ToList();
++			l.Sort((a, b) => {
++				return a.ToString().CompareTo(b.ToString());
++			});
++			if (l.Count > 1 && l[0].Parent is ParameterDeclaration parameterDeclaration)
++			{
++				parameterDeclaration.Attributes.Clear();
++				foreach (var attr in l)
++				{
++					parameterDeclaration.Attributes.Add(attr);
++				}
++			}
++
+ 			int count = 0;
+-			foreach (AttributeSection attr in attributes) {
++			foreach (AttributeSection attr in l) {
+ 				if (count-- <= 0) {
+ 					cancellationToken.ThrowIfCancellationRequested();
+ 					count = CANCEL_CHECK_LOOP_COUNT;
