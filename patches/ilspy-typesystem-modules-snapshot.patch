@@ -1,0 +1,51 @@
+diff --git a/ICSharpCode.Decompiler/TypeSystem/DecompilerTypeSystem.cs b/ICSharpCode.Decompiler/TypeSystem/DecompilerTypeSystem.cs
+index 73ff657..89ce96a 100644
+--- a/ICSharpCode.Decompiler/TypeSystem/DecompilerTypeSystem.cs
++++ b/ICSharpCode.Decompiler/TypeSystem/DecompilerTypeSystem.cs
+@@ -164,6 +164,9 @@ namespace ICSharpCode.Decompiler.TypeSystem
+ 		private ModuleDef maindnlibMod;
+ 		KnownTypeCache knownTypeCache;
+ 		List<IModule> modules;
++		// Thread safety: 'modules' only changes under lock (dnlibModules). Readers get this copy-on-write
++		// snapshot instead, so they can enumerate it while another thread adds a referenced module.
++		IModule[] modulesSnapshot;
+ 		Dictionary<ModuleDef, IModule> dnlibModules;
+ 		List<IModule> referencedModules;
+ 
+@@ -233,8 +236,10 @@ namespace ICSharpCode.Decompiler.TypeSystem
+ 			var corLibAsm = maindnlibMod.Context.AssemblyResolver.Resolve(maindnlibMod.CorLibTypes.AssemblyRef, maindnlibMod);
+ 			if (corLibAsm != null)
+ 				GetOrAddModule(corLibAsm.ManifestModule);
+-			else
++			else {
+ 				modules.Add(FakeCorLibModule = new FakeCorLibTypesModule(this, maindnlibMod));
++				Volatile.Write(ref modulesSnapshot, modules.ToArray());
++			}
+ 		}
+ 
+ 		void Init(IModuleReference mainAssembly)
+@@ -245,6 +250,7 @@ namespace ICSharpCode.Decompiler.TypeSystem
+ 				[maindnlibMod] = mainModule
+ 			};
+ 			this.modules = new List<IModule> { this.mainModule };
++			this.modulesSnapshot = this.modules.ToArray();
+ 			this.referencedModules = new List<IModule>();
+ 			this.knownTypeCache = new KnownTypeCache(this);
+ 		}
+@@ -261,7 +267,7 @@ namespace ICSharpCode.Decompiler.TypeSystem
+ 
+ 		public IReadOnlyList<IModule> Modules {
+ 			get {
+-				return modules.AsReadOnly();
++				return Volatile.Read(ref modulesSnapshot);
+ 			}
+ 		}
+ 
+@@ -272,6 +278,7 @@ namespace ICSharpCode.Decompiler.TypeSystem
+ 					return tsMod;
+ 				tsMod = new MetadataFile(module).WithOptions(options).Resolve(resolveContext);
+ 				modules.Add(tsMod);
++				Volatile.Write(ref modulesSnapshot, modules.ToArray());
+ 				referencedModules.Add(tsMod);
+ 				dnlibModules[module] = tsMod;
+ 				Interlocked.Exchange(ref this.rootNamespace, null);
