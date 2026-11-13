@@ -336,6 +336,7 @@ namespace dnSpy_Console {
 			new UsageInfo("--asm-path", dnSpy_Console_Resources.CmdLinePath, dnSpy_Console_Resources.CmdLineDescription_AsmPath),
 			new UsageInfo("--user-gac", dnSpy_Console_Resources.CmdLinePath, dnSpy_Console_Resources.CmdLineDescription_UserGAC),
 			new UsageInfo("--no-gac", null, dnSpy_Console_Resources.CmdLineDescription_NoGAC),
+			new UsageInfo("--no-exact-match", null, dnSpy_Console_Resources.CmdLineDescription_NoExactMatch),
 			new UsageInfo("--no-stdlib", null, dnSpy_Console_Resources.CmdLineDescription_NoStdLib),
 			new UsageInfo("--no-sln", null, dnSpy_Console_Resources.CmdLineDescription_NoSLN),
 			new UsageInfo("--sln-name", dnSpy_Console_Resources.CmdLineName, dnSpy_Console_Resources.CmdLineDescription_SlnName),
@@ -433,6 +434,7 @@ namespace dnSpy_Console {
 			"asm-path",
 			"user-gac",
 			"gac",
+			"exact-match",
 			"stdlib",
 			"sln",
 			"sln-name",
@@ -522,6 +524,11 @@ namespace dnSpy_Console {
 
 					case "--no-gac":
 						useGac = false;
+						break;
+
+					case "--no-exact-match":
+						// Use the closest version when the exact version of a reference can't be found
+						assemblyResolver.FindExactMatch = false;
 						break;
 
 					case "--no-stdlib":

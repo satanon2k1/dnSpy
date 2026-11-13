@@ -124,6 +124,15 @@ namespace dnSpy.Console.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to use the closest version when the exact version of a referenced assembly can&apos;t be found.
+        /// </summary>
+        internal static string CmdLineDescription_NoExactMatch {
+            get {
+                return ResourceManager.GetString("CmdLineDescription_NoExactMatch", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to don&apos;t use the GAC to look up assemblies. Useful with --no-stdlib.
         /// </summary>
         internal static string CmdLineDescription_NoGAC {

@@ -321,4 +321,7 @@
   <data name="CmdLineDescription_SdkProject" xml:space="preserve">
     <value>generate SDK style project files</value>
   </data>
+  <data name="CmdLineDescription_NoExactMatch" xml:space="preserve">
+    <value>use the closest version when the exact version of a referenced assembly can't be found</value>
+  </data>
 </root>
